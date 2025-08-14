@@ -2,28 +2,33 @@
 
 #include <bitset>
 #include <queue>
+#include <set>
 #include <vector>
 
-#include "IComponentPool.h"
-#include "ComponentPool.h"
-#include "ECSSystem.h"
+#include "ISparseSet.h"
+#include "SparseSet.h"
 
 namespace BGEntity {
     using Entity = std::uint32_t;
-    constexpr Entity MAX_ENTITIES = 32;
-    using ComponentSet = std::bitset<MAX_ENTITIES>;
+    constexpr BGEntity::Entity MAX_ENTITIES = 400;
 
-    class IComponentPool;
+    using ComponentSet = std::bitset<MAX_ENTITIES>;
+    using ComponentName = const char*;
+    using ComponentID = uint32_t;
+
+    template<typename ...Components>
+    class ECSView;
+
+    class ISparseSet;
     template<typename T>
-    class ComponentPool;
+    class SparseSet;
 
     class ECSSystem;
+
     class ECS {
     private:
-        const Entity _maxEntities = 0;
-
-        using ComponentName = const char*;
-        using ComponentID = uint32_t;
+        template<typename ...>
+        friend class ECSView;
 
         std::queue<Entity> _availableEntities;
         std::vector<Entity> _livingEntities;
@@ -31,20 +36,10 @@ namespace BGEntity {
         std::array<ComponentSet, MAX_ENTITIES> _entityComponentSets{};
 
         std::unordered_map<ComponentName, ComponentID> _componentNameToIDs;
-        std::unordered_map<ComponentName, std::unique_ptr<IComponentPool>> _componentPools;
+        std::unordered_map<ComponentName, std::unique_ptr<ISparseSet>> _componentPools;
         ComponentID _currentComponentIDIndex = 0;
-
-        std::unordered_map<ComponentName, std::shared_ptr<ECSSystem>> _systems;
-        // These are the components that the system affects
-        std::unordered_map<ComponentName, ComponentSet> _systemComponentSets;
-    private:
-        template<typename T>
-        ComponentPool<T>* GetComponentPool() {
-            IComponentPool* pool = _componentPools[GetComponentName<T>()].get();
-            return dynamic_cast<ComponentPool<T>*>(pool);
-        }
     public:
-        explicit ECS(Entity maxEntities);
+        explicit ECS();
         ~ECS();
 
         Entity CreateEntity();
@@ -53,12 +48,17 @@ namespace BGEntity {
 
         void SetComponentSet(Entity entity, ComponentSet componentSet);
         ComponentSet GetComponentSet(Entity entity);
-        void OnEntityComponentSetChanged(Entity entity, ComponentSet componentSet);
+
+        template<typename Component>
+        SparseSet<Component>* GetComponentPool() {
+            ISparseSet* pool = _componentPools[GetComponentName<Component>()].get();
+            return static_cast<SparseSet<Component>*>(pool);
+        }
 
         #pragma region Component Management
-        template<typename T>
+        template<typename Component>
         void RegisterComponent() {
-            const char* name = typeid(T).name();
+            const char* name = typeid(Component).name();
 
             _componentNameToIDs.insert({
                 name,
@@ -66,7 +66,7 @@ namespace BGEntity {
             });
             _componentPools.insert({
                 name,
-                std::make_unique<ComponentPool<T>>()
+                std::make_unique<SparseSet<Component>>()
             });
 
             _currentComponentIDIndex++;
@@ -79,8 +79,6 @@ namespace BGEntity {
             auto componentSet = GetComponentSet(entity);
             componentSet.set(GetComponentID<T>(), true);
             SetComponentSet(entity, componentSet);
-
-            OnEntityComponentSetChanged(entity, componentSet);
         }
         template<typename T>
         void RemoveComponent(Entity entity) {
@@ -89,8 +87,6 @@ namespace BGEntity {
             auto componentSet = GetComponentSet(entity);
             componentSet.set(GetComponentID<T>(), false);
             SetComponentSet(entity, componentSet);
-
-            OnEntityComponentSetChanged(entity, componentSet);
         }
         template<typename T>
         ComponentID GetComponentID() {
@@ -109,19 +105,58 @@ namespace BGEntity {
 
         #pragma endregion
 
-        #pragma region System Management
-        template<typename T>
-        std::shared_ptr<T> RegisterSystem() {
-            auto system = std::make_shared<T>();
-            _systems.insert({GetComponentName<T>(), system});
+        template<typename ...Components>
+        ECSView<Components...> View() {
+            return ECSView<Components...>(this);
+        }
+    };
 
-            return system;
+    template<typename ...Components>
+    class ECSView {
+    private:
+        ECS* _ecs;
+
+        std::vector<ISparseSet*> _componentSetsInView;
+        ISparseSet* _smallestSet;
+
+        [[nodiscard]]
+        bool HasAllComponents(Entity entity) const {
+            for (auto set: _componentSetsInView) {
+                if (!set->HasEntity(entity))
+                    return false;
+            }
+
+            return true;
         }
 
-        template<typename T>
-        void SetSystemComponentSet(ComponentSet set) {
-            _systemComponentSets[GetComponentName<T>()] = set;
+        template<typename Func>
+        void ForEachImplementation(Func function) {
+            for (auto& entity : _smallestSet->GetEntities()) {
+                if (HasAllComponents(entity)) {
+                    if constexpr (std::is_invocable_v<Func, Entity, Components&...>)
+                        function(entity, _ecs->GetComponent<Components>(entity)...);
+                    else if constexpr (std::is_invocable_v<Func, Components&...>)
+                        function(_ecs->GetComponent<Components>(entity)...);
+                    else
+                        static_assert(false, "Bad lambda provided to .ForEach(), parameter pack does not match lambda args");
+                }
+            }
         }
-        #pragma endregion
+    public:
+        ECSView(ECS* ecs) : _componentSetsInView {ecs->GetComponentPool<Components>()...}{
+            _ecs = ecs;
+
+            _smallestSet = *std::min_element(_componentSetsInView.begin(), _componentSetsInView.end(), [](ISparseSet* a, ISparseSet* b) {
+               return a->GetSize() < b->GetSize();
+            });
+        }
+
+        void ForEach(std::function<void(Components&...)> function) {
+            ForEachImplementation(function);
+        }
+
+        void ForEach(std::function<void(Entity, Components&...)> function) {
+            ForEachImplementation(function);
+        }
     };
 }

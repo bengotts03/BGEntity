@@ -1,10 +1,10 @@
 #include "ECS.h"
-#include "ComponentPool.h"
+#include "SparseSet.h"
 
 namespace BGEntity {
-    ECS::ECS(Entity maxEntities) : _maxEntities(maxEntities){
+    ECS::ECS(){
         _availableEntities = std::queue<Entity>();
-        for (int i = 0; i < _maxEntities; ++i) {
+        for (int i = 0; i < MAX_ENTITIES; ++i) {
             _availableEntities.push(i);
         }
     }
@@ -34,12 +34,6 @@ namespace BGEntity {
 
             component->OnEntityDestroyed(entity);
         }
-
-        for (auto& pair : _systems) {
-            auto& system = pair.second;
-
-            system->RemoveEntityFromSystem(entity);
-        }
     }
 
     void ECS::SetComponentSet(Entity entity, ComponentSet componentSet) {
@@ -48,20 +42,5 @@ namespace BGEntity {
 
     ComponentSet ECS::GetComponentSet(Entity entity) {
         return _entityComponentSets[entity];
-    }
-
-    void ECS::OnEntityComponentSetChanged(Entity entity, ComponentSet entityComponentSet) {
-        for (auto& pair : _systems) {
-            auto& name = pair.first;
-            auto& system = pair.second;
-            auto& componentSet = _systemComponentSets[name];
-
-            if ((entityComponentSet & componentSet) == componentSet) {
-                system->AddEntityToSystem(entity);
-            }
-            else {
-                system->RemoveEntityFromSystem(entity);
-            }
-        }
     }
 }
