@@ -10,7 +10,6 @@ A lightweight, high-performance Entity Component System (ECS) implementation in 
 - 🚀 High-performance iteration over component combinations
 - 📊 Minimal overhead for large numbers of entities
 
-
 ## Quick Start
 
 ### 1. Initialize the ECS
@@ -64,10 +63,19 @@ Use views to efficiently query entities with specific component combinations:
 
 ```cpp
 auto view = ecs->View<Transform, Physics>();
+
 view.ForEach([&](BGEntity::Entity entity, auto& transform, auto& physics) {
     std::cout << "Entity (" << entity << ") at Position: " 
               << transform.Position.x << "," << transform.Position.y << std::endl;
 });
+
+OR
+
+view.ForEach([](auto& transform, auto& physics) {
+    std::cout << "Entity (" << entity << ") at Position: " 
+              << transform.Position.x << "," << transform.Position.y << std::endl;
+});
+
 ```
 
 ## Requirements
@@ -76,22 +84,6 @@ view.ForEach([&](BGEntity::Entity entity, auto& transform, auto& physics) {
 - **CMake 3.31+**
 - **GLM** (OpenGL Mathematics) for vector operations
 
-#### `BGEntity::Entity`
-Type alias for entity identifiers.
-
-### Views
-
-Views provide efficient iteration over entities that have specific component combinations.
-
-```cpp
-// Query entities with Transform and Physics components
-auto entities = ecs->View<Transform, Physics>();
-
-entities.ForEach([&](BGEntity::Entity entity, auto& transform, auto& physics) {
-    // Update logic for movable entities
-});
-
 entities.ForEach([&](auto& transform, auto& physics) {
     // Update logic for movable entities
 });
-```
