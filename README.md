@@ -72,7 +72,7 @@ view.ForEach([&](BGEntity::Entity entity, auto& transform, auto& physics) {
 OR
 
 view.ForEach([](auto& transform, auto& physics) {
-    std::cout << "Entity (" << entity << ") at Position: " 
+    std::cout << "Position: " 
               << transform.Position.x << "," << transform.Position.y << std::endl;
 });
 
