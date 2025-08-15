@@ -80,10 +80,5 @@ view.ForEach([](auto& transform, auto& physics) {
 
 ## Requirements
 
-- **C++20** or later
-- **CMake 3.31+**
+- **C++17** or later
 - **GLM** (OpenGL Mathematics) for vector operations
-
-entities.ForEach([&](auto& transform, auto& physics) {
-    // Update logic for movable entities
-});
