@@ -5,25 +5,111 @@
 #include <set>
 #include <vector>
 
-#include "ISparseSet.h"
-#include "SparseSet.h"
-
 namespace BGEntity {
     using Entity = std::uint32_t;
-    constexpr BGEntity::Entity MAX_ENTITIES = 400;
+    // constexpr BGEntity::Entity MAX_ENTITIES = std::numeric_limits<Entity>::max();
+    constexpr BGEntity::Entity MAX_ENTITIES = 10000;
 
-    using ComponentSet = std::bitset<MAX_ENTITIES>;
+    constexpr size_t MAX_COMPONENTS = 64;
+    using ComponentSet = std::bitset<MAX_COMPONENTS>;
     using ComponentName = const char*;
     using ComponentID = uint32_t;
 
     template<typename ...Components>
     class ECSView;
 
-    class ISparseSet;
+    class ISparseSet {
+    public:
+        virtual ~ISparseSet() = default;
+        virtual size_t GetSize() = 0;
+        virtual bool HasEntity(Entity entity) = 0;
+        virtual std::vector<Entity> GetEntities() = 0;
+        virtual void OnEntityDestroyed(Entity entity) = 0;
+    };
     template<typename T>
-    class SparseSet;
+    class SparseSet : public ISparseSet{
+    public:
+        SparseSet() {
+            _denseComponents.reserve(1000);
+            _denseIndexToEntity.reserve(1000);
+            _entityToDenseIndex.reserve(1000);
+        }
+        ~SparseSet() override = default;
 
-    class ECSSystem;
+        void Add(const Entity entity, T component) {
+            size_t denseIndex = _size;
+
+            // Sparse: Entity -> Dense Index
+            _entityToDenseIndex[entity] = denseIndex;
+            // Reverse: Dense Index -> Entity
+            _denseIndexToEntity[denseIndex] = entity;
+
+            if (denseIndex >= _denseComponents.size())
+                _denseComponents.push_back(component);
+            else
+                _denseComponents[denseIndex] = component;
+
+            _size++;
+        }
+
+        void Remove(const Entity entity) {
+            size_t indexToRemoveFromDense = _entityToDenseIndex[entity];
+            size_t lastIndex = _size - 1;
+
+            if (indexToRemoveFromDense != lastIndex) {
+                _denseComponents[indexToRemoveFromDense] = _denseComponents[lastIndex];
+
+                Entity entityToMove = _denseIndexToEntity[lastIndex];
+                _entityToDenseIndex[entityToMove] = indexToRemoveFromDense;
+                _denseIndexToEntity[indexToRemoveFromDense] = entityToMove;
+            }
+
+            _entityToDenseIndex.erase(entity);
+            _denseIndexToEntity.erase(lastIndex);
+
+            _size--;
+        }
+
+        T& Get(Entity entity) {
+            return _denseComponents[_entityToDenseIndex.at(entity)];
+        }
+
+        void OnEntityDestroyed(const Entity entity) override {
+            if (_entityToDenseIndex.contains(entity))
+                Remove(entity);
+        }
+
+        bool HasEntity(Entity entity) override {
+            if (_entityToDenseIndex.contains(entity))
+                return true;
+
+            return false;
+        }
+
+        std::vector<Entity> GetEntities() override{
+            std::vector<Entity> entities;
+            entities.reserve(_denseIndexToEntity.size());
+
+            int ind = 0;
+            for (auto [dense, entity]: _denseIndexToEntity) {
+                entities.emplace(entities.begin() + ind, entity);
+                ind++;
+            }
+
+            return entities;
+        }
+
+        size_t GetSize() override {
+            return _size;
+        }
+    private:
+        std::vector<T> _denseComponents;
+
+        std::unordered_map<Entity, size_t> _entityToDenseIndex;
+        std::unordered_map<size_t, Entity> _denseIndexToEntity;
+
+        size_t _size = 0;
+    };
 
     class ECS {
     private:
@@ -39,15 +125,42 @@ namespace BGEntity {
         std::unordered_map<ComponentName, std::unique_ptr<ISparseSet>> _componentPools;
         ComponentID _currentComponentIDIndex = 0;
     public:
-        explicit ECS();
-        ~ECS();
+        ECS() {
+            _availableEntities = std::queue<Entity>();
+            for (int i = 0; i < MAX_ENTITIES; ++i) {
+                _availableEntities.push(i);
+            }
+        }
+        ~ECS() = default;
 
-        Entity CreateEntity();
-        void DeleteEntity(Entity entity);
-        void OnDestroyEntity(Entity entity);
+        Entity CreateEntity() {
+            Entity e = _availableEntities.front();
+            _availableEntities.pop();
 
-        void SetComponentSet(Entity entity, ComponentSet componentSet);
-        ComponentSet GetComponentSet(Entity entity);
+            _livingEntities.emplace_back(e);
+
+            return e;
+        }
+        void DeleteEntity(Entity entity) {
+            OnDestroyEntity(entity);
+
+            _livingEntities.erase(_livingEntities.begin() + entity);
+            _availableEntities.push(entity);
+        }
+        void OnDestroyEntity(Entity entity) const {
+            for (auto& pair : _componentPools) {
+                auto& component = pair.second;
+
+                component->OnEntityDestroyed(entity);
+            }
+        }
+
+        void SetComponentSet(Entity entity, ComponentSet componentSet) {
+            _entityComponentSets[entity] = componentSet;
+        }
+        ComponentSet GetComponentSet(Entity entity) const {
+            return _entityComponentSets[entity];
+        }
 
         template<typename Component>
         SparseSet<Component>* GetComponentPool() {
